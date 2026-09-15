@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""관심 109종목의 15분 거래대금과 시총 순위를 모아 data/ 에 저장한다."""
+"""업비트 화면의 거래대금(24시간 누적)을 15분마다 기록하고, 시총 순위를 함께 모은다."""
 import json, os, time
 from datetime import datetime, timedelta, timezone
 import requests
@@ -25,7 +25,6 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 VOL = os.path.join(ROOT, "data", "volumes.json")
 CAP = os.path.join(ROOT, "data", "marketcap.json")
 KEEP_DAYS = 7
-SLEEP = 0.15
 
 
 def get(url, params=None, tries=4):
@@ -62,26 +61,42 @@ def resolve():
     return out
 
 
+def slot_now():
+    """지금 시각을 15분 단위로 내림 (예: 02:37 -> 02:30)"""
+    now = datetime.now(KST)
+    return now.replace(minute=now.minute // 15 * 15, second=0, microsecond=0).strftime("%Y-%m-%dT%H:%M")
+
+
 def collect_volumes(coins):
     store = json.load(open(VOL, encoding="utf-8")) if os.path.exists(VOL) else {"coins": {}}
-    failed = []
-    for i, meta in enumerate(coins, 1):
-        code = meta["market"]
+    slot = slot_now()
+
+    # 시세 조회는 한 번에 여러 종목을 받을 수 있어 100개씩 끊어서 요청
+    tickers, failed = {}, []
+    codes = [c["market"] for c in coins]
+    for i in range(0, len(codes), 100):
+        chunk = codes[i:i + 100]
         try:
-            candles = get("https://api.upbit.com/v1/candles/minutes/15", {"market": code, "count": 4})
+            for t in get("https://api.upbit.com/v1/ticker", {"markets": ",".join(chunk)}):
+                tickers[t["market"]] = t
         except Exception as e:
-            failed.append(code)
-            print(f"  ! {code} 실패: {e}")
-            time.sleep(SLEEP)
+            failed += chunk
+            print(f"  ! 조회 실패: {e}")
+        time.sleep(0.2)
+
+    for meta in coins:
+        code = meta["market"]
+        t = tickers.get(code)
+        if not t:
+            if code not in failed:
+                failed.append(code)
             continue
         entry = store["coins"].setdefault(code, {"name": meta["name"], "slots": {}})
         entry["name"] = meta["name"]
-        for c in candles:
-            entry["slots"][c["candle_date_time_kst"][:16]] = round(c["candle_acc_trade_price"])
-            entry["price"] = c["trade_price"]
-        time.sleep(SLEEP)
-        if i % 25 == 0:
-            print(f"  {i}/{len(coins)}")
+        entry["price"] = t["trade_price"]
+        entry["change"] = round(t.get("signed_change_rate", 0) * 100, 2)
+        # 업비트 화면의 '거래대금' = 24시간 누적 거래대금
+        entry["slots"][slot] = round(t["acc_trade_price_24h"])
 
     cut = (datetime.now(KST) - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M")
     for e in store["coins"].values():
@@ -91,7 +106,7 @@ def collect_volumes(coins):
     store["failed"] = failed
     os.makedirs(os.path.dirname(VOL), exist_ok=True)
     json.dump(store, open(VOL, "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
-    print(f"거래대금 저장 · 성공 {len(coins) - len(failed)} / 실패 {len(failed)}")
+    print(f"{slot} 저장 · 성공 {len(coins) - len(failed)} / 실패 {len(failed)}")
 
 
 def collect_marketcap(coins):
