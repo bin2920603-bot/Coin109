@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>15분 거래대금 장부 · 관심 109</title>
+<style>
+  :root{
+    --ink:#0E141B;
+    --ink-2:#131C26;
+    --rule:#22303E;
+    --rule-soft:#1A2530;
+    --text:#C9D6E2;
+    --text-dim:#6E8195;
+    --up:#F2606C;
+    --down:#4D92F0;
+    --flat:#5A6B7B;
+    --gold:#D6B15E;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--ink);
+    color:var(--text);
+    font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;
+    font-size:13px;
+    -webkit-text-size-adjust:100%;
+  }
+  header{
+    display:flex;flex-wrap:wrap;align-items:baseline;gap:10px 16px;
+    padding:14px 16px 12px;border-bottom:1px solid var(--rule);
+    position:sticky;top:0;background:var(--ink);z-index:5;
+  }
+  h1{
+    margin:0;font-size:15px;font-weight:650;letter-spacing:-.01em;
+  }
+  h1 span{color:var(--gold)}
+  .meta{color:var(--text-dim);font-size:12px}
+  .meta b{color:var(--text);font-weight:500}
+  .controls{margin-left:auto;display:flex;gap:8px;align-items:center}
+  select{
+    background:var(--ink-2);color:var(--text);border:1px solid var(--rule);
+    border-radius:3px;padding:5px 8px;font:inherit;font-size:12px;
+  }
+  select:focus-visible{outline:2px solid var(--gold);outline-offset:1px}
+
+  .scroll{overflow:auto;height:calc(100% - 52px);}
+  table{border-collapse:separate;border-spacing:0;white-space:nowrap}
+  th,td{padding:0 10px;height:30px;border-bottom:1px solid var(--rule-soft)}
+  thead th{
+    position:sticky;top:0;z-index:3;background:var(--ink-2);
+    border-bottom:1px solid var(--rule);
+    font-weight:500;color:var(--text-dim);font-size:11px;text-align:right;
+  }
+  thead th.now{color:var(--gold)}
+  th.rank,td.rank{
+    position:sticky;left:0;z-index:2;background:var(--ink);
+    width:44px;text-align:right;color:var(--text-dim);
+    font-variant-numeric:tabular-nums;
+  }
+  th.coin,td.coin{
+    position:sticky;left:44px;z-index:2;background:var(--ink);
+    text-align:left;border-right:1px solid var(--rule);min-width:118px;
+  }
+  thead th.rank,thead th.coin{z-index:4;background:var(--ink-2)}
+  td.coin a{color:var(--text);text-decoration:none}
+  td.coin a:hover,td.coin a:focus-visible{color:var(--gold);text-decoration:underline}
+  td.coin .sym{color:var(--text-dim);font-size:11px;margin-left:5px}
+  td.v{text-align:right;font-variant-numeric:tabular-nums;font-size:12.5px}
+  .up{color:var(--up)}
+  .down{color:var(--down)}
+  .flat{color:var(--flat)}
+  .none{color:#2C3A48}
+  tbody tr:hover td{background:#16202B}
+  tbody tr:hover td.rank,tbody tr:hover td.coin{background:#16202B}
+
+  .empty{padding:48px 20px;max-width:34em;line-height:1.7;color:var(--text-dim)}
+  .empty strong{display:block;color:var(--text);font-size:15px;margin-bottom:8px}
+  code{background:var(--ink-2);border:1px solid var(--rule);border-radius:3px;padding:1px 5px;color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <h1>15분 거래대금 장부 <span>관심 109</span></h1>
+  <div class="meta" id="meta">불러오는 중</div>
+  <div class="controls">
+    <select id="span" aria-label="표시 구간">
+      <option value="16">4시간</option>
+      <option value="24" selected>6시간</option>
+      <option value="48">12시간</option>
+      <option value="96">24시간</option>
+    </select>
+    <select id="sort" aria-label="정렬 기준">
+      <option value="cap" selected>시총순</option>
+      <option value="vol">거래대금순</option>
+    </select>
+  </div>
+</header>
+
+<div class="scroll" id="scroll"><div class="empty" id="empty">불러오는 중</div></div>
+
+<script>
+const KRW = v => {
+  if (v == null) return null;
+  const e = v / 1e8;                       // 억
+  if (e >= 1000) return Math.round(e).toLocaleString();
+  if (e >= 100)  return e.toFixed(0);
+  if (e >= 10)   return e.toFixed(1);
+  if (e >= 1)    return e.toFixed(2);
+  return e.toFixed(2);
+};
+const hhmm = s => s.slice(11, 16);
+
+let store = null, caps = {};
+
+async function load() {
+  const bust = "?t=" + Date.now();
+  try {
+    const r = await fetch("data/volumes.json" + bust, {cache: "no-store"});
+    if (!r.ok) throw new Error(r.status);
+    store = await r.json();
+  } catch (e) {
+    document.getElementById("meta").textContent = "데이터 없음";
+    document.getElementById("empty").innerHTML =
+      "<strong>아직 쌓인 데이터가 없습니다</strong>" +
+      "GitHub 저장소의 Actions 탭에서 <code>collect-volumes</code>를 한 번 실행하면 " +
+      "<code>data/volumes.json</code>이 만들어지고, 이후 15분마다 자동으로 채워집니다.";
+    return;
+  }
+  try {
+    const r2 = await fetch("data/marketcap.json" + bust, {cache: "no-store"});
+    if (r2.ok) caps = (await r2.json()).ranks || {};
+  } catch (e) { caps = {}; }
+  render();
+}
+
+function render() {
+  const limit = +document.getElementById("span").value;
+  const mode  = document.getElementById("sort").value;
+  const coins = store.coins || {};
+
+  // 전체 슬롯을 모아 최신순으로
+  const slotSet = new Set();
+  for (const c of Object.values(coins)) for (const k of Object.keys(c.slots || {})) slotSet.add(k);
+  const slots = [...slotSet].sort().reverse().slice(0, limit);
+
+  const rows = Object.entries(coins).map(([market, c]) => ({
+    market, name: c.name,
+    sym: market.split("-")[1],
+    rank: caps[market] ?? 99999,
+    slots: c.slots || {},
+    latest: c.slots?.[slots[0]] ?? 0
+  }));
+
+  rows.sort((a, b) => mode === "cap" ? a.rank - b.rank || a.name.localeCompare(b.name)
+                                     : b.latest - a.latest);
+
+  const head = ['<tr><th class="rank">시총</th><th class="coin">코인</th>'];
+  slots.forEach((s, i) => head.push(`<th class="${i === 0 ? "now" : ""}">${hhmm(s)}</th>`));
+  head.push("</tr>");
+
+  const body = rows.map(r => {
+    const cells = slots.map((s, i) => {
+      const v = r.slots[s];
+      if (v == null) return '<td class="v none">·</td>';
+      const prev = r.slots[slots[i + 1]];          // 한 칸 오른쪽 = 직전 구간
+      let cls = "flat";
+      if (prev != null) cls = v > prev ? "up" : v < prev ? "down" : "flat";
+      return `<td class="v ${cls}">${KRW(v)}</td>`;
+    }).join("");
+    const rank = r.rank === 99999 ? "–" : r.rank;
+    const url = `https://upbit.com/exchange?code=CRIX.UPBIT.${r.market}`;
+    return `<tr><td class="rank">${rank}</td><td class="coin">` +
+           `<a href="${url}" target="_blank" rel="noopener">${r.name}</a>` +
+           `<span class="sym">${r.sym}</span></td>${cells}</tr>`;
+  }).join("");
+
+  document.getElementById("scroll").innerHTML =
+    `<table><thead>${head.join("")}</thead><tbody>${body}</tbody></table>`;
+
+  const failed = (store.failed || []).length;
+  document.getElementById("meta").innerHTML =
+    `<b>${rows.length}종목</b> · 단위 억원 · 갱신 ${store.updated_at ? store.updated_at.slice(5, 16).replace("T", " ") : "–"}` +
+    (failed ? ` · <b>${failed}종목 수집 실패</b>` : "");
+}
+
+document.getElementById("span").addEventListener("change", render);
+document.getElementById("sort").addEventListener("change", render);
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
